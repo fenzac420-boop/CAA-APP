@@ -1,0 +1,50 @@
+name: Build CAA 1.0 Android
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  android:
+    name: Android APK + AAB
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Récupérer le projet
+        uses: actions/checkout@v4
+
+      - name: Installer Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Vérifier les fichiers
+        run: |
+          pwd
+          ls -la
+          test -f lib/main.dart
+          test -f assets/data/core_vocab_fr.json
+
+      - name: Installer les dépendances
+        run: flutter pub get
+
+      - name: Construire APK Android
+        run: flutter build apk --release
+
+      - name: Construire AAB Google Play
+        run: flutter build appbundle --release
+
+      - name: Déposer l'APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CAA-1.0-Android-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Déposer le fichier Google Play
+        uses: actions/upload-artifact@v4
+        with:
+          name: CAA-1.0-Android-AAB
+          path: build/app/outputs/bundle/release/app-release.aab
