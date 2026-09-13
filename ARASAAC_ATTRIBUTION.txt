@@ -1,0 +1,4 @@
+MaVoix utilise l'API et les pictogrammes ARASAAC.
+Avant distribution commerciale, vérifier les conditions de licence et d'attribution applicables aux ressources utilisées.
+Site : https://arasaac.org/
+API : https://api.arasaac.org/
