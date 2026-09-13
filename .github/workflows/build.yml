@@ -1,53 +1,53 @@
-Nom: Build CAA 1.0 Android
+name: Build CAA 1.0 Android
 
-sur:
+on:
   workflow_dispatch:
   push:
     tags:
       - "v*"
 
-emplois:
+jobs:
   Android:
-    Nom: Android APK + AAB
-    run-on: ubuntu-last
+    name: Android APK + AAB
+    runs-on: ubuntu-latest
 
-    étapes:
-      - nom: Récupérer le projet
-        utilisations: actions/checkout@v4
+    steps:
+      - name: Récupérer le projet
+        uses: actions/checkout@v4
 
-      - nom: Installer Flutter
-        utilisations: subosito/flutter-action@v2
-        avec:
-          canal: stable
+      - name: Installer Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
           cache: true
 
-      - nom: Vérifier les fichiers
+      - name: Vérifier les fichiers
         run: |
           pwd
-          Ls-la
+          ls -la
           test -f lib/main.dart
           test -f assets/data/core_vocab_fr.json
 
-      - nom: Préparer Gradle Android
+      - name: Préparer Gradle Android
         run: chmod +x android/gradlew
 
-      - nom: Installateur moins dépendances
+      - name: Installer les dépendances
         run: flutter pub get
 
-      - nom: Construire APK Android
+      - name: Construire APK Android
         run: flutter build apk --release
 
-      - nom: Construire AAB Google Play
+      - name: Construire AAB Google Play
         run: flutter build appbundle --release
 
-      - nom: Déposeur l'APK
-        utilisations: actions/upload-artifact@v4
-        avec:
-          Nom: CAA-1.0-Android-APK
-          chemin: build/app/outputs/flutter-apk/app-release.apk
+      - name: Déposer l'APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CAA-1.0-Android-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
 
-      - nom: Déposeur le fichier Google Play
-        utilisations: actions/upload-artifact@v4
-        avec:
-          Nom: CAA-1.0-Android-AAB
-          chemin: build/app/outputs/bundle/release/app-release.aab
+      - name: Déposer le fichier Google Play
+        uses: actions/upload-artifact@v4
+        with:
+          name: CAA-1.0-Android-AAB
+          path: build/app/outputs/bundle/release/app-release.aab
