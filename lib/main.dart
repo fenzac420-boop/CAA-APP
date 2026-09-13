@@ -1,246 +1,369 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  final prefs = await SharedPreferences.getInstance();
-  runApp(MaVoixApp(prefs: prefs));
-}
-
 class Word {
-  final String id, label, search, category;
-  final int? slot;
+  final String label;
   final String? imageUrl;
-  Word({required this.id, required this.label, required this.search, required this.category, this.slot, this.imageUrl});
-  factory Word.fromJson(Map<String,dynamic> j) => Word(
-    id: '${j['id']}', label: '${j['label']}', search: '${j['search'] ?? j['label']}',
-    category: '${j['category'] ?? 'Autre'}', slot: j['slot'] as int?,
-    imageUrl: j['imageUrl'] as String?
-  );
+  const Word(this.label, {this.imageUrl});
 }
 
 class ArasaacService {
-  Future<List<Word>> search(String q) async {
-    if (q.trim().isEmpty) return [];
-    final uri = Uri.parse('https://api.arasaac.org/v1/pictograms/fr/search/${Uri.encodeComponent(q.trim())}');
+  static Future<List<Word>> search(String text) async {
+    if (text.trim().isEmpty) return [];
+    final uri = Uri.parse(
+      'https://api.arasaac.org/v1/pictograms/fr/search/${Uri.encodeComponent(text.trim())}',
+    );
     try {
       final r = await http.get(uri).timeout(const Duration(seconds: 8));
       if (r.statusCode != 200) return [];
       final data = jsonDecode(r.body);
       if (data is! List) return [];
-      return data.take(48).map((x) {
-        final id = int.tryParse('${x['_id'] ?? x['id']}') ?? 0;
-        final folder = (id ~/ 1000).toString();
+      return data.take(80).map<Word>((e) {
+        final id = e['_id'] ?? e['id'];
+        final folder = id.toString().length > 3
+            ? id.toString().substring(0, id.toString().length - 3)
+            : id.toString();
         return Word(
-          id: '$id', label: '${x['keywords'] is List && (x['keywords'] as List).isNotEmpty ? x['keywords'][0] : q}',
-          search: q, category: 'Recherche',
-          imageUrl: 'https://static.arasaac.org/pictograms/$folder/${id}_500.png'
+          e['keywords'] is List && (e['keywords'] as List).isNotEmpty
+              ? (e['keywords'] as List).first.toString()
+              : text,
+          imageUrl: 'https://static.arasaac.org/pictograms/$folder/${id}_500.png',
         );
       }).toList();
-    } catch (_) { return []; }
+    } catch (_) {
+      return [];
+    }
   }
 }
 
 class TtsService {
   final FlutterTts tts = FlutterTts();
-  Future speak(String text, double rate) async {
+  Future<void> speak(String text, {double rate = .45}) async {
     await tts.setLanguage('fr-FR');
     await tts.setSpeechRate(rate);
-    await tts.setVolume(1);
     await tts.speak(text);
   }
 }
 
-class MaVoixApp extends StatefulWidget {
-  final SharedPreferences prefs;
-  const MaVoixApp({super.key, required this.prefs});
-  @override State<MaVoixApp> createState() => _MaVoixAppState();
+void main() => runApp(const CaaApp());
+
+class CaaApp extends StatefulWidget {
+  const CaaApp({super.key});
+  @override State<CaaApp> createState() => _CaaAppState();
 }
-class _MaVoixAppState extends State<MaVoixApp> {
-  int columns = 6;
-  double speechRate = .48;
+
+class _CaaAppState extends State<CaaApp> {
   bool dark = false;
-  @override void initState() {
-    super.initState();
-    columns = widget.prefs.getInt('columns') ?? 6;
-    speechRate = widget.prefs.getDouble('rate') ?? .48;
-    dark = widget.prefs.getBool('dark') ?? false;
-  }
-  void save() {
-    widget.prefs.setInt('columns', columns);
-    widget.prefs.setDouble('rate', speechRate);
-    widget.prefs.setBool('dark', dark);
-  }
-  @override Widget build(BuildContext context) => MaterialApp(
-    debugShowCheckedModeBanner:false,
-    title:'CAA 1.0',
-    theme: ThemeData(useMaterial3:true, colorSchemeSeed: Colors.indigo, brightness: Brightness.light),
-    darkTheme: ThemeData(useMaterial3:true, colorSchemeSeed: Colors.indigo, brightness: Brightness.dark),
+  @override
+  Widget build(BuildContext context) => MaterialApp(
+    debugShowCheckedModeBanner: false,
+    title: 'CAA 1.0',
     themeMode: dark ? ThemeMode.dark : ThemeMode.light,
-    home: HomeScreen(
-      columns: columns, speechRate: speechRate,
-      onSettings:(c,r,d){setState((){columns=c;speechRate=r;dark=d;});save();}
-    )
+    theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.indigo),
+    darkTheme: ThemeData.dark(useMaterial3: true),
+    home: HomeScreen(onDarkChanged: (v) => setState(() => dark = v)),
   );
 }
 
 class HomeScreen extends StatefulWidget {
-  final int columns; final double speechRate;
-  final void Function(int,double,bool) onSettings;
-  const HomeScreen({super.key, required this.columns, required this.speechRate, required this.onSettings});
-  @override State<HomeScreen> createState()=>_HomeScreenState();
+  final ValueChanged<bool> onDarkChanged;
+  const HomeScreen({super.key, required this.onDarkChanged});
+  @override State<HomeScreen> createState() => _HomeScreenState();
 }
-class _HomeScreenState extends State<HomeScreen> {
-  final api=ArasaacService(), tts=TtsService();
-  final searchCtrl=TextEditingController();
-  final List<String> categories=['Cœur','Personnes','Actions','Nourriture','Émotions','Lieux','Social'];
-  String category='Cœur';
-  List<Word> results=[];
-  List<Word> sentence=[];
-  final favorites=<String>{};
-  bool editing=false;
-  final Map<String, List<Word>> categoryCache={};
 
-  final core=[
-    Word(id:'je',label:'Je',search:'je',category:'Cœur',slot:0),
-    Word(id:'tu',label:'Tu',search:'tu',category:'Cœur',slot:1),
-    Word(id:'veux',label:'veux',search:'vouloir',category:'Actions',slot:2),
-    Word(id:'pas',label:'pas',search:'pas',category:'Cœur',slot:3),
-    Word(id:'encore',label:'encore',search:'encore',category:'Cœur',slot:4),
-    Word(id:'fini',label:'fini',search:'fini',category:'Émotions',slot:5),
-    Word(id:'oui',label:'oui',search:'oui',category:'Cœur',slot:6),
-    Word(id:'non',label:'non',search:'non',category:'Cœur',slot:7),
-    Word(id:'aide',label:'aide',search:'aide',category:'Actions',slot:8),
-    Word(id:'manger',label:'manger',search:'manger',category:'Actions',slot:9),
-    Word(id:'boire',label:'boire',search:'boire',category:'Actions',slot:10),
-    Word(id:'toilettes',label:'toilettes',search:'toilettes',category:'Lieux',slot:11),
+class _HomeScreenState extends State<HomeScreen> {
+  final tts = TtsService();
+  final search = TextEditingController();
+  final List<String> sentence = [];
+  final Set<String> favorites = {};
+  int selectedCategory = 0;
+  int columns = 6;
+  double speechRate = .45;
+  bool editing = false;
+  List<Word> remote = [];
+
+  final categories = const [
+    ('Accueil', Icons.home_rounded),
+    ('Cœur', Icons.star_rounded),
+    ('Personnes', Icons.people_rounded),
+    ('Actions', Icons.directions_run_rounded),
+    ('Nourriture', Icons.restaurant_rounded),
+    ('Émotions', Icons.favorite_rounded),
+    ('Lieux', Icons.place_rounded),
+    ('Social', Icons.forum_rounded),
+    ('Objets', Icons.category_rounded),
   ];
 
-  void add(Word w){setState(()=>sentence.add(w));}
-  void removeLast(){if(sentence.isNotEmpty)setState(()=>sentence.removeLast());}
-  Future speak(){return tts.speak(sentence.map((e)=>e.label).join(' '),widget.speechRate);}
-  Future search(String q) async {
-    if(q.trim().isEmpty){setState(()=>results=[]);return;}
-    final r=await api.search(q);
-    setState(()=>results=r);
+  final Map<String, List<String>> words = {
+    'Accueil': ['Je','Tu','veux','pas','encore','fini','oui','non','aide','bonjour','merci','s’il te plaît'],
+    'Cœur': ['je','veux','pas','encore','plus','fini','oui','non','aide','j’aime','je n’aime pas'],
+    'Personnes': ['maman','papa','enfant','bébé','ami','professeur','médecin','famille','femme','homme'],
+    'Actions': ['manger','boire','dormir','jouer','aller','venir','prendre','donner','ouvrir','fermer','attendre','regarder'],
+    'Nourriture': ['eau','pain','lait','pomme','banane','repas','gâteau','yaourt','pâtes','riz','jus','chocolat'],
+    'Émotions': ['content','triste','fâché','peur','fatigué','mal','calme','heureux','surpris','stressé'],
+    'Lieux': ['maison','école','toilettes','chambre','parc','magasin','hôpital','restaurant','voiture'],
+    'Social': ['bonjour','au revoir','merci','s’il te plaît','pardon','oui','non','viens','stop','encore'],
+    'Objets': ['téléphone','livre','ballon','chaise','table','lit','ordinateur','clé','vêtement','jouet'],
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
   }
 
-  List<Word> wordsForCategory(){
-    if(category=='Cœur') return core;
-    return core.where((w)=>w.category==category).toList();
+  Future<void> _load() async {
+    final p = await SharedPreferences.getInstance();
+    setState(() {
+      columns = p.getInt('columns') ?? 6;
+      speechRate = p.getDouble('rate') ?? .45;
+      favorites.addAll(p.getStringList('favorites') ?? []);
+    });
   }
 
-  void createPicto(){
-    final label=TextEditingController();
-    final symbol=TextEditingController(text:'⭐');
-    showDialog(context:context,builder:(_)=>AlertDialog(
-      title:const Text('Créer un pictogramme'),
-      content:Column(mainAxisSize:MainAxisSize.min,children:[
-        TextField(controller:label,decoration:const InputDecoration(labelText:'Nom du pictogramme')),
-        TextField(controller:symbol,decoration:const InputDecoration(labelText:'Symbole / emoji')),
-      ]),
-      actions:[
-        TextButton(onPressed:()=>Navigator.pop(context),child:const Text('Annuler')),
-        FilledButton(onPressed:(){
-          if(label.text.trim().isNotEmpty){
-            final w=Word(id:'custom_${DateTime.now().millisecondsSinceEpoch}',label:label.text.trim(),search:label.text.trim(),category:category);
-            setState(()=>categoryCache.putIfAbsent('Mes pictos',()=>[]).add(w));
-          }
-          Navigator.pop(context);
-        },child:const Text('Ajouter'))
-      ],
-    ));
+  Future<void> _save() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt('columns', columns);
+    await p.setDouble('rate', speechRate);
+    await p.setStringList('favorites', favorites.toList());
   }
 
-  @override Widget build(BuildContext context){
-    final isDesktop=MediaQuery.of(context).size.width>800;
-    final base=searchCtrl.text.isEmpty?wordsForCategory():results;
+  void addWord(String w) {
+    setState(() => sentence.add(w));
+  }
+
+  Future<void> speakSentence() async {
+    await tts.speak(sentence.join(' '), rate: speechRate);
+  }
+
+  Future<void> searchArasaac(String q) async {
+    final result = await ArasaacService.search(q);
+    if (mounted) setState(() => remote = result);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cat = categories[selectedCategory].$1;
+    final base = words[cat] ?? [];
+    final items = cat == 'Cœur' ? words['Accueil']! : base;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('CAA 1.0',style:TextStyle(fontWeight:FontWeight.w800)),
-        actions:[
-          IconButton(tooltip:'Créer un pictogramme',onPressed:createPicto,icon:const Icon(Icons.add_photo_alternate_outlined)),
-          IconButton(tooltip:'Édition',onPressed:()=>setState(()=>editing=!editing),icon:Icon(editing?Icons.check:Icons.edit_outlined)),
-          IconButton(tooltip:'Réglages',onPressed:()=>showSettings(context),icon:const Icon(Icons.settings_outlined)),
+        title: const Text('CAA 1.0', style: TextStyle(fontWeight: FontWeight.bold)),
+        actions: [
+          IconButton(onPressed: () => setState(() => editing = !editing),
+            icon: Icon(editing ? Icons.check_rounded : Icons.edit_rounded),
+            tooltip: 'Modifier'),
+          IconButton(onPressed: () => _settings(), icon: const Icon(Icons.settings_rounded)),
         ],
       ),
-      body: Column(children:[
-        _sentenceBar(),
-        _searchBar(),
-        SizedBox(height:54,child:ListView.separated(
-          padding:const EdgeInsets.symmetric(horizontal:10,vertical:6),
-          scrollDirection:Axis.horizontal,itemCount:categories.length,
-          separatorBuilder:(_,__)=>const SizedBox(width:7),
-          itemBuilder:(_,i){final c=categories[i];return ChoiceChip(label:Text(c),selected:category==c,onSelected:(_){setState((){category=c;searchCtrl.clear();results=[];});});}
-        )),
-        Expanded(child:GridView.builder(
-          padding:const EdgeInsets.fromLTRB(10,4,10,20),
-          gridDelegate:SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount:isDesktop?widget.columns:((widget.columns).clamp(3,6)),
-            crossAxisSpacing:9,mainAxisSpacing:9,childAspectRatio:.88),
-          itemCount:base.length,
-          itemBuilder:(_,i)=>_picto(base[i])
-        ))
-      ])
+      body: Column(
+        children: [
+          _sentenceBar(),
+          _searchBar(),
+          Expanded(
+            child: Row(
+              children: [
+                _categoryRail(),
+                Expanded(child: _grid(items)),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _sentenceBar()=>Container(
-    margin:const EdgeInsets.fromLTRB(10,8,10,4),padding:const EdgeInsets.all(8),
-    decoration:BoxDecoration(borderRadius:BorderRadius.circular(18),border:Border.all(color:Theme.of(context).colorScheme.outlineVariant),color:Theme.of(context).colorScheme.surfaceContainerHighest),
-    child:Row(children:[
-      Expanded(child:SingleChildScrollView(scrollDirection:Axis.horizontal,child:Row(children:[
-        if(sentence.isEmpty) const Padding(padding:EdgeInsets.all(10),child:Text('Touchez des pictogrammes pour construire une phrase')),
-        ...sentence.map((w)=>Padding(padding:const EdgeInsets.only(right:5),child:Chip(label:Text(w.label))))
-      ]))),
-      IconButton(onPressed:removeLast,icon:const Icon(Icons.backspace_outlined)),
-      FilledButton.icon(onPressed:sentence.isEmpty?null:speak,icon:const Icon(Icons.volume_up),label:const Text('Parler'))
-    ])
+  Widget _sentenceBar() => Container(
+    padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
+    child: Row(
+      children: [
+        Expanded(
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 74),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+            ),
+            child: sentence.isEmpty
+              ? const Align(alignment: Alignment.centerLeft, child: Text('Touchez des pictogrammes pour construire une phrase', style: TextStyle(fontSize: 17)))
+              : SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(children: sentence.map((w) => Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: Chip(label: Text(w, style: const TextStyle(fontSize: 16)),
+                      onDeleted: () => setState(() => sentence.remove(w))),
+                  )).toList()),
+                ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        FilledButton.icon(
+          onPressed: sentence.isEmpty ? null : speakSentence,
+          icon: const Icon(Icons.volume_up_rounded),
+          label: const Text('Dire'),
+          style: FilledButton.styleFrom(minimumSize: const Size(105, 58)),
+        ),
+        const SizedBox(width: 5),
+        IconButton(
+          onPressed: sentence.isEmpty ? null : () => setState(() => sentence.clear()),
+          icon: const Icon(Icons.backspace_rounded),
+          tooltip: 'Effacer',
+        )
+      ],
+    ),
   );
 
-  Widget _searchBar()=>Padding(padding:const EdgeInsets.symmetric(horizontal:10,vertical:4),child:TextField(
-    controller:searchCtrl,onChanged:search,
-    decoration:InputDecoration(prefixIcon:const Icon(Icons.search),hintText:'Rechercher un pictogramme…',suffixIcon:searchCtrl.text.isEmpty?null:IconButton(onPressed:(){searchCtrl.clear();setState(()=>results=[]);},icon:const Icon(Icons.clear)),filled:true,border:OutlineInputBorder(borderRadius:BorderRadius.circular(18),borderSide:BorderSide.none))
-  ));
-
-  Widget _picto(Word w){
-    return InkWell(onTap:()=>add(w),onLongPress:()=>setState(()=>favorites.add(w.id)),borderRadius:BorderRadius.circular(18),child:Container(
-      decoration:BoxDecoration(borderRadius:BorderRadius.circular(18),border:Border.all(color:Theme.of(context).colorScheme.outlineVariant),color:Theme.of(context).colorScheme.surface),
-      child:Stack(children:[
-        Center(child:Padding(padding:const EdgeInsets.fromLTRB(6,7,6,30),child:w.imageUrl!=null?Image.network(w.imageUrl!,fit:BoxFit.contain,errorBuilder:(_,__,___)=>_fallback(w)): _fallback(w))),
-        Positioned(left:5,right:5,bottom:5,child:Text(w.label,textAlign:TextAlign.center,maxLines:2,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:15,fontWeight:FontWeight.w700))),
-        if(favorites.contains(w.id)) const Positioned(right:5,top:5,child:Icon(Icons.star,size:18))
-      ])
-    ));
-  }
-
-  Widget _fallback(Word w)=>Container(
-    alignment:Alignment.center,
-    child:Text(_emoji(w.label),style:const TextStyle(fontSize:42))
+  Widget _searchBar() => Padding(
+    padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+    child: TextField(
+      controller: search,
+      textInputAction: TextInputAction.search,
+      onSubmitted: searchArasaac,
+      decoration: InputDecoration(
+        prefixIcon: const Icon(Icons.search_rounded),
+        hintText: 'Rechercher dans ARASAAC…',
+        suffixIcon: IconButton(
+          icon: const Icon(Icons.arrow_forward_rounded),
+          onPressed: () => searchArasaac(search.text),
+        ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+      ),
+    ),
   );
-  String _emoji(String s){
-    final x=s.toLowerCase();
-    if(x.contains('manger'))return '🍽️'; if(x.contains('boire'))return '🥤'; if(x.contains('toilet'))return '🚻';
-    if(x.contains('aide'))return '🆘'; if(x.contains('oui'))return '👍'; if(x.contains('non'))return '👎';
-    if(x.contains('cœur')||x.contains('je'))return '❤️'; if(x.contains('fini'))return '✅'; if(x.contains('encore'))return '🔁';
-    return '💬';
+
+  Widget _categoryRail() => SizedBox(
+    width: 112,
+    child: ListView.builder(
+      itemCount: categories.length,
+      itemBuilder: (_, i) {
+        final c = categories[i];
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: () => setState(() { selectedCategory = i; remote = []; }),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                color: i == selectedCategory ? Theme.of(context).colorScheme.primaryContainer : null,
+              ),
+              child: Column(children: [
+                Icon(c.$2, size: 28),
+                const SizedBox(height: 4),
+                Text(c.$1, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis),
+              ]),
+            ),
+          ),
+        );
+      },
+    ),
+  );
+
+  Widget _grid(List<String> items) {
+    final arasaac = remote;
+    if (arasaac.isNotEmpty) {
+      return GridView.builder(
+        padding: const EdgeInsets.all(8),
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: columns.clamp(3, 10),
+          crossAxisSpacing: 7, mainAxisSpacing: 7,
+          childAspectRatio: .92,
+        ),
+        itemCount: arasaac.length,
+        itemBuilder: (_, i) => _tile(arasaac[i].label, imageUrl: arasaac[i].imageUrl),
+      );
+    }
+    return GridView.builder(
+      padding: const EdgeInsets.all(8),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: columns.clamp(3, 10),
+        crossAxisSpacing: 7, mainAxisSpacing: 7,
+        childAspectRatio: .92,
+      ),
+      itemCount: items.length,
+      itemBuilder: (_, i) => _tile(items[i]),
+    );
   }
 
-  void showSettings(BuildContext context){
-    int c=widget.columns; double r=widget.speechRate; bool d=Theme.of(context).brightness==Brightness.dark;
-    showDialog(context:context,builder:(_)=>StatefulBuilder(builder:(ctx,setD)=>AlertDialog(
-      title:const Text('Réglages'),
-      content:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
-        Text('Colonnes : $c'),Slider(min:3,max:8,divisions:5,value:c.toDouble(),onChanged:(v)=>setD(()=>c=v.round())),
-        Text('Vitesse de parole : ${r.toStringAsFixed(2)}'),Slider(min:.25,max:.7,value:r,onChanged:(v)=>setD(()=>r=v)),
-        SwitchListTile(value:d,onChanged:(v)=>setD(()=>d=v),title:const Text('Mode sombre')),
-        const Divider(),const Text('Accès : tactile, souris et clavier',style:TextStyle(fontSize:13))
-      ])),
-      actions:[TextButton(onPressed:()=>Navigator.pop(context),child:const Text('Annuler')),FilledButton(onPressed:(){widget.onSettings(c,r,d);Navigator.pop(context);},child:const Text('Enregistrer'))]
-    )));
+  Widget _tile(String label, {String? imageUrl}) {
+    final fav = favorites.contains(label);
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => addWord(label),
+        onLongPress: () => tts.speak(label, rate: speechRate),
+        child: Stack(
+          children: [
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(5, 5, 5, 22),
+                child: imageUrl == null
+                  ? _emojiFor(label)
+                  : Image.network(imageUrl, fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => _emojiFor(label)),
+              ),
+            ),
+            Align(alignment: Alignment.bottomCenter,
+              child: Padding(padding: const EdgeInsets.all(4),
+                child: Text(label, textAlign: TextAlign.center, maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)))),
+            if (fav) const Positioned(top: 3, right: 3, child: Icon(Icons.star_rounded, size: 19)),
+            if (editing) Positioned(top: 2, left: 2, child: IconButton(
+              visualDensity: VisualDensity.compact,
+              onPressed: () async {
+                setState(() => fav ? favorites.remove(label) : favorites.add(label));
+                await _save();
+              },
+              icon: Icon(fav ? Icons.star_rounded : Icons.star_border_rounded),
+            )),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _emojiFor(String w) {
+    final e = {
+      'manger':'🍽️','boire':'🥤','dormir':'😴','aide':'🆘','oui':'👍','non':'👎',
+      'bonjour':'👋','merci':'🙏','maison':'🏠','école':'🏫','toilettes':'🚻',
+      'content':'😀','triste':'😢','fâché':'😠','peur':'😨','fatigué':'😴',
+      'eau':'💧','pomme':'🍎','pain':'🍞','maman':'👩','papa':'👨',
+    }[w.toLowerCase()] ?? '🖼️';
+    return FittedBox(child: Text(e, style: const TextStyle(fontSize: 52)));
+  }
+
+  Future<void> _settings() async {
+    await showModalBottomSheet(
+      context: context, isScrollControlled: true,
+      builder: (_) => StatefulBuilder(builder: (context, setSheet) => Padding(
+        padding: const EdgeInsets.all(22),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('Réglages CAA 1.0', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 15),
+          Row(children: [
+            const Expanded(child: Text('Colonnes de pictogrammes')),
+            DropdownButton<int>(value: columns, items: [4,5,6,7,8,9,10].map((n) => DropdownMenuItem(value:n, child:Text('$n'))).toList(),
+              onChanged: (v) { if(v!=null){ setState(()=>columns=v); setSheet(()=>{}); _save(); }}),
+          ]),
+          Row(children: [
+            const Expanded(child: Text('Vitesse de parole')),
+            Expanded(child: Slider(value: speechRate, min:.25, max:.7, onChanged:(v){setState(()=>speechRate=v);setSheet(()=>{});}, onChangeEnd:(_)=>_save())),
+          ]),
+          SwitchListTile(
+            title: const Text('Mode sombre'),
+            value: Theme.of(context).brightness == Brightness.dark,
+            onChanged: (v) { widget.onDarkChanged(v); setSheet(()=>{}); },
+          ),
+          const SizedBox(height: 10),
+        ]),
+      )),
+    );
   }
 }
