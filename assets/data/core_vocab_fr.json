@@ -1,0 +1,73 @@
+	
+0	
+id	"je"
+label	"Je"
+search	"je"
+category	"Cœur"
+slot	0
+1	
+id	"tu"
+label	"Tu"
+search	"tu"
+category	"Cœur"
+slot	1
+2	
+id	"veux"
+label	"veux"
+search	"vouloir"
+category	"Actions"
+slot	2
+3	
+id	"pas"
+label	"pas"
+search	"pas"
+category	"Cœur"
+slot	3
+4	
+id	"encore"
+label	"encore"
+search	"encore"
+category	"Cœur"
+slot	4
+5	
+id	"fini"
+label	"fini"
+search	"fini"
+category	"Émotions"
+slot	5
+6	
+id	"oui"
+label	"oui"
+search	"oui"
+category	"Cœur"
+slot	6
+7	
+id	"non"
+label	"non"
+search	"non"
+category	"Cœur"
+slot	7
+8	
+id	"aide"
+label	"aide"
+search	"aide"
+category	"Actions"
+slot	8
+9	
+id	"manger"
+label	"manger"
+search	"manger"
+category	"Actions"
+slot	9
+10	
+id	"boire"
+label	"boire"
+search	"boire"
+category	"Actions"
+slot	10
+11	
+id	"toilettes"
+label	"toilettes"
+search	"toilettes"
+category	"Lieux"
+slot	11
